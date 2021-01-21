@@ -24,6 +24,7 @@
 
 #include<opencv2/core/core.hpp>
 #include<opencv2/features2d/features2d.hpp>
+#include "yolo_v2_class.hpp" 
 
 #include"Viewer.h"
 #include"FrameDrawer.h"
@@ -37,6 +38,7 @@
 #include "Initializer.h"
 #include "MapDrawer.h"
 #include "System.h"
+#include "DynamicObjectDetecting.h"
 
 #include <mutex>
 
@@ -49,17 +51,18 @@ class Map;
 class LocalMapping;
 class LoopClosing;
 class System;
+class DynamicObjectDetecting;
 
 class Tracking
 {  
 
 public:
     Tracking(System* pSys, ORBVocabulary* pVoc, FrameDrawer* pFrameDrawer, MapDrawer* pMapDrawer, Map* pMap,
-             KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor);
+             KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor, DynamicObjectDetecting& dynamicObjectDetector);
 
     // Preprocess the input and call Track(). Extract features and performs stereo matching.
     cv::Mat GrabImageStereo(const cv::Mat &imRectLeft,const cv::Mat &imRectRight, const double &timestamp);
-    cv::Mat GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const double &timestamp);
+    cv::Mat GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const double &timestamp, const double &timestampD, DynamicObjectDetecting& dynamicObjectDetector);
     cv::Mat GrabImageMonocular(const cv::Mat &im, const double &timestamp);
 
     void SetLocalMapper(LocalMapping* pLocalMapper);
@@ -166,9 +169,9 @@ protected:
     Initializer* mpInitializer;
 
     //Local Map
-    KeyFrame* mpReferenceKF;
-    std::vector<KeyFrame*> mvpLocalKeyFrames;
-    std::vector<MapPoint*> mvpLocalMapPoints;
+    KeyFrame* mpReferenceKF;  //局部地图的参考关键帧（与当前帧共享地图点最多的关键帧）
+    std::vector<KeyFrame*> mvpLocalKeyFrames; //局部地图的所有关键帧
+    std::vector<MapPoint*> mvpLocalMapPoints; //局部地图的所有地图点
     
     // System
     System* mpSystem;
@@ -214,6 +217,15 @@ protected:
     bool mbRGB;
 
     list<MapPoint*> mlpTemporalPoints;
+
+private:
+    double mBBoxSingleSideZoomSize;
+    int mSelectMethod;
+    vector<string> mSpecifiedThings;
+    string mCfgFile, mWeightFile;
+    string mLabelPath;
+    double mDetectTh;
+
 };
 
 } //namespace ORB_SLAM

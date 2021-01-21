@@ -28,21 +28,21 @@ namespace ORB_SLAM2
 
 long unsigned int MapPoint::nNextId=0;
 mutex MapPoint::mGlobalMutex;
-
+// 参考帧是关键帧，该地图点将于许多帧关键帧对应，建立关键帧之间的共视关系
 MapPoint::MapPoint(const cv::Mat &Pos, KeyFrame *pRefKF, Map* pMap):
     mnFirstKFid(pRefKF->mnId), mnFirstFrame(pRefKF->mnFrameId), nObs(0), mnTrackReferenceForFrame(0),
     mnLastFrameSeen(0), mnBALocalForKF(0), mnFuseCandidateForKF(0), mnLoopPointForKF(0), mnCorrectedByKF(0),
     mnCorrectedReference(0), mnBAGlobalForKF(0), mpRefKF(pRefKF), mnVisible(1), mnFound(1), mbBad(false),
     mpReplaced(static_cast<MapPoint*>(NULL)), mfMinDistance(0), mfMaxDistance(0), mpMap(pMap)
 {
-    Pos.copyTo(mWorldPos);
-    mNormalVector = cv::Mat::zeros(3,1,CV_32F);
+    Pos.copyTo(mWorldPos); // 地图点在世界坐标系下的坐标
+    mNormalVector = cv::Mat::zeros(3,1,CV_32F); // 平均可视方向（法向量）
 
     // MapPoints can be created from Tracking and Local Mapping. This mutex avoid conflicts with id.
     unique_lock<mutex> lock(mpMap->mMutexPointCreation);
     mnId=nNextId++;
 }
-
+// 参考帧是普通帧，该地图点只与当前普通帧的特征点对应（临时地图点？？）
 MapPoint::MapPoint(const cv::Mat &Pos, Map* pMap, Frame* pFrame, const int &idxF):
     mnFirstKFid(-1), mnFirstFrame(pFrame->mnId), nObs(0), mnTrackReferenceForFrame(0), mnLastFrameSeen(0),
     mnBALocalForKF(0), mnFuseCandidateForKF(0),mnLoopPointForKF(0), mnCorrectedByKF(0),
@@ -50,15 +50,15 @@ MapPoint::MapPoint(const cv::Mat &Pos, Map* pMap, Frame* pFrame, const int &idxF
     mnFound(1), mbBad(false), mpReplaced(NULL), mpMap(pMap)
 {
     Pos.copyTo(mWorldPos);
-    cv::Mat Ow = pFrame->GetCameraCenter();
-    mNormalVector = mWorldPos - Ow;
-    mNormalVector = mNormalVector/cv::norm(mNormalVector);
+    cv::Mat Ow = pFrame->GetCameraCenter(); // 相机中心世界坐标
+    mNormalVector = mWorldPos - Ow; // 地图点在当前相机坐标系下的坐标
+    mNormalVector = mNormalVector/cv::norm(mNormalVector); // 地图点在当前帧相机坐标系下的方向
 
     cv::Mat PC = Pos - Ow;
-    const float dist = cv::norm(PC);
-    const int level = pFrame->mvKeysUn[idxF].octave;
+    const float dist = cv::norm(PC); // 与当前帧相机坐标原点的距离
+    const int level = pFrame->mvKeysUn[idxF].octave;  // octacv:从哪一层金字塔得到的此关键点。
     const float levelScaleFactor =  pFrame->mvScaleFactors[level];
-    const int nLevels = pFrame->mnScaleLevels;
+    const int nLevels = pFrame->mnScaleLevels; //尺度金字塔层数（8层）
 
     mfMaxDistance = dist*levelScaleFactor;
     mfMinDistance = mfMaxDistance/pFrame->mvScaleFactors[nLevels-1];
@@ -345,6 +345,7 @@ void MapPoint::UpdateNormalAndDepth()
     if(observations.empty())
         return;
 
+    // normal为地图点在所有被观测到的关键帧中的单位向量（相机坐标原点指向地图点）的矢量之和
     cv::Mat normal = cv::Mat::zeros(3,1,CV_32F);
     int n=0;
     for(map<KeyFrame*,size_t>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
@@ -358,7 +359,7 @@ void MapPoint::UpdateNormalAndDepth()
 
     cv::Mat PC = Pos - pRefKF->GetCameraCenter();
     const float dist = cv::norm(PC);
-    const int level = pRefKF->mvKeysUn[observations[pRefKF]].octave;
+    const int level = pRefKF->mvKeysUn[observations[pRefKF]].octave; 
     const float levelScaleFactor =  pRefKF->mvScaleFactors[level];
     const int nLevels = pRefKF->mnScaleLevels;
 
@@ -366,7 +367,7 @@ void MapPoint::UpdateNormalAndDepth()
         unique_lock<mutex> lock3(mMutexPos);
         mfMaxDistance = dist*levelScaleFactor;
         mfMinDistance = mfMaxDistance/pRefKF->mvScaleFactors[nLevels-1];
-        mNormalVector = normal/n;
+        mNormalVector = normal/n;  //平均法向量（除以n，mNormalVector并不是单位向量？？）
     }
 }
 
@@ -381,7 +382,7 @@ float MapPoint::GetMaxDistanceInvariance()
     unique_lock<mutex> lock(mMutexPos);
     return 1.2f*mfMaxDistance;
 }
-
+// 预测尺度（预测处在尺度金字塔的哪一层）
 int MapPoint::PredictScale(const float &currentDist, KeyFrame* pKF)
 {
     float ratio;

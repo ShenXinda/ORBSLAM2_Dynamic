@@ -29,6 +29,7 @@
 #include "ORBVocabulary.h"
 #include "KeyFrame.h"
 #include "ORBextractor.h"
+#include "DynamicObjectDetecting.h"
 
 #include <opencv2/opencv.hpp>
 
@@ -39,6 +40,7 @@ namespace ORB_SLAM2
 
 class MapPoint;
 class KeyFrame;
+class DynamicObjectDetecting;
 
 class Frame
 {
@@ -52,13 +54,14 @@ public:
     Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeStamp, ORBextractor* extractorLeft, ORBextractor* extractorRight, ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth);
 
     // Constructor for RGB-D cameras.
-    Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeStamp, ORBextractor* extractor,ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth);
+    Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeStamp, ORBextractor* extractor,ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth, const std::vector<bbox_t>& dynaObjs, const double bboxSingleSideZoomSize);
 
     // Constructor for Monocular cameras.
     Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extractor,ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth);
 
     // Extract ORB on the image. 0 for left image and 1 for right image.
     void ExtractORB(int flag, const cv::Mat &im);
+    void ExtractStaticORB(int flag, const cv::Mat &im, const std::vector<bbox_t>& dynaObjs, const double bboxSingleSideZoomSize);
 
     // Compute Bag of Words representation.
     void ComputeBoW();
@@ -134,8 +137,8 @@ public:
     // Vector of keypoints (original for visualization) and undistorted (actually used by the system).
     // In the stereo case, mvKeysUn is redundant as images must be rectified.
     // In the RGB-D case, RGB images can be distorted.
-    std::vector<cv::KeyPoint> mvKeys, mvKeysRight;
-    std::vector<cv::KeyPoint> mvKeysUn;
+    std::vector<cv::KeyPoint> mvKeys, mvKeysRight; // mvKeys -> (u_L,v_L), mvKeysRight -> u_R
+    std::vector<cv::KeyPoint> mvKeysUn;  // 去畸变后的关键点
 
     // Corresponding stereo coordinate and depth for each keypoint.
     // "Monocular" keypoints have a negative value.
@@ -156,7 +159,7 @@ public:
     std::vector<bool> mvbOutlier;
 
     // Keypoints are assigned to cells in a grid to reduce matching complexity when projecting MapPoints.
-    static float mfGridElementWidthInv;
+    static float mfGridElementWidthInv; //取倒数，即一个像素占一个网格的比例
     static float mfGridElementHeightInv;
     std::vector<std::size_t> mGrid[FRAME_GRID_COLS][FRAME_GRID_ROWS];
 
@@ -205,7 +208,7 @@ private:
     cv::Mat mRcw;
     cv::Mat mtcw;
     cv::Mat mRwc;
-    cv::Mat mOw; //==mtwc
+    cv::Mat mOw; //==mtwc，相机中心在世界坐标系下的坐标
 };
 
 }// namespace ORB_SLAM

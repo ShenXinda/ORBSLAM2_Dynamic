@@ -51,27 +51,28 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
     for(size_t iMP=0; iMP<vpMapPoints.size(); iMP++)
     {
         MapPoint* pMP = vpMapPoints[iMP];
-        if(!pMP->mbTrackInView)
+        if(!pMP->mbTrackInView) // 跳过不需要被跟踪的地图点
             continue;
 
-        if(pMP->isBad())
+        if(pMP->isBad()) // 跳过剔除的地图点
             continue;
 
-        const int &nPredictedLevel = pMP->mnTrackScaleLevel;
+        const int &nPredictedLevel = pMP->mnTrackScaleLevel;  //该地图点在帧F中所处的尺度（金字塔的哪一层）
 
         // The size of the window will depend on the viewing direction
-        float r = RadiusByViewingCos(pMP->mTrackViewCos);
+        float r = RadiusByViewingCos(pMP->mTrackViewCos);  //  viewCos>0.998 -> r=2.5, else r=4
 
         if(bFactor)
-            r*=th;
+            r*=th; //th影响了搜索窗口的大小
 
+        //搜索帧F中的特定窗口内的点作为备选匹配点（窗口位置与该地图点投影后坐标有关，大小与地图点所处尺度和r有关，具体没细看下面函数）
         const vector<size_t> vIndices =
                 F.GetFeaturesInArea(pMP->mTrackProjX,pMP->mTrackProjY,r*F.mvScaleFactors[nPredictedLevel],nPredictedLevel-1,nPredictedLevel);
 
-        if(vIndices.empty())
+        if(vIndices.empty()) //没找到可以匹配的点
             continue;
 
-        const cv::Mat MPdescriptor = pMP->GetDescriptor();
+        const cv::Mat MPdescriptor = pMP->GetDescriptor(); //得到地图点描述子
 
         int bestDist=256;
         int bestLevel= -1;
@@ -84,6 +85,7 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
         {
             const size_t idx = *vit;
 
+            // 如果此备选的点已经有了对应的地图点，则跳过
             if(F.mvpMapPoints[idx])
                 if(F.mvpMapPoints[idx]->Observations()>0)
                     continue;
@@ -96,9 +98,9 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
             }
 
             const cv::Mat &d = F.mDescriptors.row(idx);
-
-            const int dist = DescriptorDistance(MPdescriptor,d);
-
+            // 计算该地图点的描述子与特征点描述子的汉明距离；
+            const int dist = DescriptorDistance(MPdescriptor,d); 
+            // 找到汉明距离值最小bestDist和次小bestDist2的两个最佳匹配特征点；
             if(dist<bestDist)
             {
                 bestDist2=bestDist;

@@ -543,7 +543,7 @@ void KeyFrame::SetBadFlag()
     mpMap->EraseKeyFrame(this);
     mpKeyFrameDB->erase(this);
 }
-
+//判断关键帧是否需要移除
 bool KeyFrame::isBad()
 {
     unique_lock<mutex> lock(mMutexConnections);

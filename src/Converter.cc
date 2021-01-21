@@ -24,6 +24,7 @@
 namespace ORB_SLAM2
 {
 
+//描述子矩阵按行存储为向量
 std::vector<cv::Mat> Converter::toDescriptorVector(const cv::Mat &Descriptors)
 {
     std::vector<cv::Mat> vDesc;
@@ -33,7 +34,7 @@ std::vector<cv::Mat> Converter::toDescriptorVector(const cv::Mat &Descriptors)
 
     return vDesc;
 }
-
+// SE3Quat：单位四元数+平移向量，7维；6维，即不包括单位四元数实部，实部可以由模为1计算。
 g2o::SE3Quat Converter::toSE3Quat(const cv::Mat &cvT)
 {
     Eigen::Matrix<double,3,3> R;
@@ -48,7 +49,7 @@ g2o::SE3Quat Converter::toSE3Quat(const cv::Mat &cvT)
 
 cv::Mat Converter::toCvMat(const g2o::SE3Quat &SE3)
 {
-    Eigen::Matrix<double,4,4> eigMat = SE3.to_homogeneous_matrix();
+    Eigen::Matrix<double,4,4> eigMat = SE3.to_homogeneous_matrix(); // homogeneous_matrix齐次矩阵，即T
     return toCvMat(eigMat);
 }
 

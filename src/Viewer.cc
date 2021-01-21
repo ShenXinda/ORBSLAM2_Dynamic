@@ -22,6 +22,7 @@
 #include <pangolin/pangolin.h>
 
 #include <mutex>
+#include <unistd.h>
 
 namespace ORB_SLAM2
 {
@@ -136,6 +137,7 @@ void Viewer::Run()
 
         cv::Mat im = mpFrameDrawer->DrawFrame();
         cv::imshow("ORB-SLAM2: Current Frame",im);
+        // cv::imwrite("/media/sata3/realsense/office_desk_dyna5/detect/"+to_string(mpTracker->mCurrentFrame.mTimeStamp)+".png",im);
         cv::waitKey(mT);
 
         if(menuReset)

@@ -25,9 +25,17 @@
 #include <list>
 #include <opencv/cv.h>
 
+#include "yolo_v2_class.hpp" //引用动态链接库中的头文件
+#include <opencv2/opencv.hpp>
+#include "opencv2/highgui/highgui.hpp"
+
+#include "DynamicObjectDetecting.h"
+
 
 namespace ORB_SLAM2
 {
+
+class DynamicObjectDetecting;
 
 class ExtractorNode
 {
@@ -59,6 +67,9 @@ public:
     void operator()( cv::InputArray image, cv::InputArray mask,
       std::vector<cv::KeyPoint>& keypoints,
       cv::OutputArray descriptors);
+    void operator()( cv::InputArray image, cv::InputArray mask,
+      std::vector<cv::KeyPoint>& keypoints,
+      cv::OutputArray descriptors, const std::vector<bbox_t>& dynaObjs, const double bboxSingleSideZoomSize);
 
     int inline GetLevels(){
         return nlevels;}
@@ -87,7 +98,8 @@ public:
 protected:
 
     void ComputePyramid(cv::Mat image);
-    void ComputeKeyPointsOctTree(std::vector<std::vector<cv::KeyPoint> >& allKeypoints);    
+    void ComputeKeyPointsOctTree(std::vector<std::vector<cv::KeyPoint> >& allKeypoints);
+    void ComputeStaticKeyPointsOctTree(std::vector<std::vector<cv::KeyPoint> >& allKeypoints, const std::vector<bbox_t>& dynaObjs, const double bboxSingleSideZoomSize);    
     std::vector<cv::KeyPoint> DistributeOctTree(const std::vector<cv::KeyPoint>& vToDistributeKeys, const int &minX,
                                            const int &maxX, const int &minY, const int &maxY, const int &nFeatures, const int &level);
 

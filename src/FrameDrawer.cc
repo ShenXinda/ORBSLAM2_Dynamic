@@ -74,7 +74,7 @@ cv::Mat FrameDrawer::DrawFrame()
     if(im.channels()<3) //this should be always true
         cvtColor(im,im,CV_GRAY2BGR);
 
-    //Draw
+    //Draw，初始化时，当前帧的特征坐标与初始帧的特征点坐标连成线，形成轨迹？
     if(state==Tracking::NOT_INITIALIZED) //INITIALIZING
     {
         for(unsigned int i=0; i<vMatches.size(); i++)
@@ -90,27 +90,32 @@ cv::Mat FrameDrawer::DrawFrame()
     {
         mnTracked=0;
         mnTrackedVO=0;
+
+        // Draw keypoints
         const float r = 5;
         const int n = vCurrentKeys.size();
         for(int i=0;i<n;i++)
         {
             if(vbVO[i] || vbMap[i])
             {
+                // 在特征点附近正方形选择左上角和右下角两个点pt1、pt2
                 cv::Point2f pt1,pt2;
                 pt1.x=vCurrentKeys[i].pt.x-r;
                 pt1.y=vCurrentKeys[i].pt.y-r;
                 pt2.x=vCurrentKeys[i].pt.x+r;
                 pt2.y=vCurrentKeys[i].pt.y+r;
 
-                // This is a match to a MapPoint in the map
+                // This is a match to a MapPoint in the map (SLAM模式)
                 if(vbMap[i])
                 {
+                    // 通道顺序为bgr，地图中MapPoints用绿色圆点表示，并用绿色小方框圈住
                     cv::rectangle(im,pt1,pt2,cv::Scalar(0,255,0));
                     cv::circle(im,vCurrentKeys[i].pt,2,cv::Scalar(0,255,0),-1);
                     mnTracked++;
                 }
-                else // This is match to a "visual odometry" MapPoint created in the last frame
+                else // This is match to a "visual odometry" MapPoint created in the last frame （仅定位模式）
                 {
+                    // 通道顺序为bgr，仅当前帧能观测到的MapPoints用蓝色圆点表示，并用蓝色小方框圈住
                     cv::rectangle(im,pt1,pt2,cv::Scalar(255,0,0));
                     cv::circle(im,vCurrentKeys[i].pt,2,cv::Scalar(255,0,0),-1);
                     mnTrackedVO++;
@@ -162,6 +167,30 @@ void FrameDrawer::DrawTextInfo(cv::Mat &im, int nState, cv::Mat &imText)
     imText.rowRange(im.rows,imText.rows) = cv::Mat::zeros(textSize.height+10,im.cols,im.type());
     cv::putText(imText,s.str(),cv::Point(5,imText.rows-5),cv::FONT_HERSHEY_PLAIN,1,cv::Scalar(255,255,255),1,8);
 
+}
+
+void FrameDrawer::draw_boxes(cv::Mat mat_img, std::vector<bbox_t> result_vec, std::vector<std::string> obj_names,
+                    int current_det_fps, int current_cap_fps)
+{
+    int const colors[6][3] = { { 1,0,1 },{ 0,0,1 },{ 0,1,1 },{ 0,1,0 },{ 1,1,0 },{ 1,0,0 } };
+    for (auto &i : result_vec)
+    {
+        cv::Scalar color = obj_id_to_color(i.obj_id);
+        cv::rectangle(mat_img, cv::Rect(i.x, i.y, i.w, i.h), color, 2);
+        // if (obj_names.size() > i.obj_id) {
+        //     std::string obj_name = obj_names[i.obj_id];
+        //     if (i.track_id > 0) obj_name += " - " + std::to_string(i.track_id);
+        //     cv::Size const text_size = getTextSize(obj_name, cv::FONT_HERSHEY_COMPLEX_SMALL, 1.2, 2, 0);
+        //     int const max_width = (text_size.width > i.w + 2) ? text_size.width : (i.w + 2);
+        //     cv::rectangle(mat_img, cv::Point2f(std::max((int)i.x - 1, 0), std::max((int)i.y - 30, 0)),
+        //     cv::Point2f(std::min((int)i.x + max_width, mat_img.cols - 1), std::min((int)i.y, mat_img.rows - 1)),color, CV_FILLED, 8, 0);
+        //     putText(mat_img, obj_name, cv::Point2f(i.x, i.y - 10), cv::FONT_HERSHEY_COMPLEX_SMALL, 1.2, cv::Scalar(0, 0, 0), 2);
+        // }
+    }
+    // if (current_det_fps >= 0 && current_cap_fps >= 0) {
+    //     std::string fps_str = "FPS detection: " + std::to_string(current_det_fps) + "   FPS capture: " + std::to_string(current_cap_fps);
+    //     putText(mat_img, fps_str, cv::Point2f(10, 20), cv::FONT_HERSHEY_COMPLEX_SMALL, 1.2, cv::Scalar(50, 255, 0), 2);
+    // }
 }
 
 void FrameDrawer::Update(Tracking *pTracker)

@@ -29,7 +29,7 @@ namespace ORB_SLAM2
 long unsigned int Frame::nNextId=0;
 bool Frame::mbInitialComputations=true;
 float Frame::cx, Frame::cy, Frame::fx, Frame::fy, Frame::invfx, Frame::invfy;
-float Frame::mnMinX, Frame::mnMinY, Frame::mnMaxX, Frame::mnMaxY;
+float Frame::mnMinX, Frame::mnMinY, Frame::mnMaxX, Frame::mnMaxY; // 去畸变后图像的范围 -> ComputeImageBounds()获得
 float Frame::mfGridElementWidthInv, Frame::mfGridElementHeightInv;
 
 Frame::Frame()
@@ -57,7 +57,7 @@ Frame::Frame(const Frame &frame)
         SetPose(frame.mTcw);
 }
 
-
+// Stereo
 Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeStamp, ORBextractor* extractorLeft, ORBextractor* extractorRight, ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth)
     :mpORBvocabulary(voc),mpORBextractorLeft(extractorLeft),mpORBextractorRight(extractorRight), mTimeStamp(timeStamp), mK(K.clone()),mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth),
      mpReferenceKF(static_cast<KeyFrame*>(NULL))
@@ -116,7 +116,8 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
     AssignFeaturesToGrid();
 }
 
-Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeStamp, ORBextractor* extractor,ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth)
+// RGBD
+Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeStamp, ORBextractor* extractor,ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth, const std::vector<bbox_t>& dynaObjs, const double bboxSingleSideZoomSize)
     :mpORBvocabulary(voc),mpORBextractorLeft(extractor),mpORBextractorRight(static_cast<ORBextractor*>(NULL)),
      mTimeStamp(timeStamp), mK(K.clone()),mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth)
 {
@@ -133,15 +134,17 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeSt
     mvInvLevelSigma2 = mpORBextractorLeft->GetInverseScaleSigmaSquares();
 
     // ORB extraction
-    ExtractORB(0,imGray);
+    ExtractStaticORB(0,imGray, dynaObjs, bboxSingleSideZoomSize);
 
     N = mvKeys.size();
 
     if(mvKeys.empty())
         return;
-
+    
+    // 去畸变，通过畸变系数矫正后的关键点 -> mvKeysU
     UndistortKeyPoints();
 
+    // 将深度d转化成Stereo Keypoint的右坐标u_R
     ComputeStereoFromRGBD(imDepth);
 
     mvpMapPoints = vector<MapPoint*>(N,static_cast<MapPoint*>(NULL));
@@ -170,7 +173,7 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeSt
     AssignFeaturesToGrid();
 }
 
-
+// monocular
 Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extractor,ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth)
     :mpORBvocabulary(voc),mpORBextractorLeft(extractor),mpORBextractorRight(static_cast<ORBextractor*>(NULL)),
      mTimeStamp(timeStamp), mK(K.clone()),mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth)
@@ -247,28 +250,41 @@ void Frame::AssignFeaturesToGrid()
 void Frame::ExtractORB(int flag, const cv::Mat &im)
 {
     if(flag==0)
-        (*mpORBextractorLeft)(im,cv::Mat(),mvKeys,mDescriptors);
+        (*mpORBextractorLeft)(im,cv::Mat(),mvKeys,mDescriptors); 
     else
         (*mpORBextractorRight)(im,cv::Mat(),mvKeysRight,mDescriptorsRight);
 }
 
+void Frame::ExtractStaticORB(int flag, const cv::Mat &im, const std::vector<bbox_t>& dynaObjs, const double bboxSingleSideZoomSize)
+{
+    if(flag==0)
+        (*mpORBextractorLeft)(im,cv::Mat(),mvKeys,mDescriptors,dynaObjs,bboxSingleSideZoomSize); // mvKeys为输出参数，保存ORB关键点；mDescriptors为输出参数，保存描述子
+    else
+        (*mpORBextractorRight)(im,cv::Mat(),mvKeysRight,mDescriptorsRight,dynaObjs,bboxSingleSideZoomSize);
+}
+
 void Frame::SetPose(cv::Mat Tcw)
 {
-    mTcw = Tcw.clone();
+    mTcw = Tcw.clone(); //cv::Mat 用=并不能拷贝数据
     UpdatePoseMatrices();
 }
 
 void Frame::UpdatePoseMatrices()
 { 
-    mRcw = mTcw.rowRange(0,3).colRange(0,3);
-    mRwc = mRcw.t();
+    mRcw = mTcw.rowRange(0,3).colRange(0,3); //[0,3)
+    mRwc = mRcw.t();  // mRwc为mRcw的逆（转置）
     mtcw = mTcw.rowRange(0,3).col(3);
-    mOw = -mRcw.t()*mtcw;
+    mOw = -mRcw.t()*mtcw; // twc = -Rcw^-1*tcw = -Rcw^T*tcw
 }
 
 bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
 {
     pMP->mbTrackInView = false;
+
+    // 1. 计算地图点在当前帧像素平面的投影，抛弃超出图像边界的点
+    // 2. 计算地图点到相机中心的距离d，抛弃在尺度不变区域外的点
+    // 3. 计算地图点视角，抛弃视角大于60°的地图点（v.n > cos(60°)）
+    // 4. 预测地图点在当前帧中的尺度
 
     // 3D in absolute coordinates
     cv::Mat P = pMP->GetWorldPos(); 
@@ -296,22 +312,22 @@ bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
     // Check distance is in the scale invariance region of the MapPoint
     const float maxDistance = pMP->GetMaxDistanceInvariance();
     const float minDistance = pMP->GetMinDistanceInvariance();
-    const cv::Mat PO = P-mOw;
+    const cv::Mat PO = P-mOw;  // 地图点在当前帧相机坐标系下的坐标
     const float dist = cv::norm(PO);
 
     if(dist<minDistance || dist>maxDistance)
         return false;
 
    // Check viewing angle
-    cv::Mat Pn = pMP->GetNormal();
-
-    const float viewCos = PO.dot(Pn)/dist;
+    cv::Mat Pn = pMP->GetNormal(); // 地图点平均可视方向，单位法向量（怎么定义的？？）
+    //P0/dist为地图点在当前帧相机坐标系下的单位向量（坐标原点指向地图点）
+    const float viewCos = PO.dot(Pn)/dist;   //地图点在当前帧相机坐标系下的单位向量与单位法向量之间夹角的余弦
 
     if(viewCos<viewingCosLimit)
         return false;
 
     // Predict scale in the image
-    const int nPredictedLevel = pMP->PredictScale(dist,this);
+    const int nPredictedLevel = pMP->PredictScale(dist,this); //预测地图点在在当前帧所处的尺度（即金字塔的哪一层）
 
     // Data used by the tracking
     pMP->mbTrackInView = true;

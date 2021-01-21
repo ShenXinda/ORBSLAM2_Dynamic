@@ -68,9 +68,9 @@ public:
 
 protected:
     std::set<MapPoint*> mspMapPoints;
-    std::set<KeyFrame*> mspKeyFrames;
+    std::set<KeyFrame*> mspKeyFrames; // ms -> set member
 
-    std::vector<MapPoint*> mvpReferenceMapPoints;
+    std::vector<MapPoint*> mvpReferenceMapPoints; //参考地图点就是指局部地图点？
 
     long unsigned int mnMaxKFid;
 

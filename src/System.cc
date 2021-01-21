@@ -18,7 +18,11 @@
 * along with ORB-SLAM2. If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <unistd.h> //??
 
+#include "yolo_v2_class.hpp" //引用动态链接库中的头文件
+#include <opencv2/opencv.hpp>
+#include "opencv2/highgui/highgui.hpp"
 
 #include "System.h"
 #include "Converter.h"
@@ -71,6 +75,19 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     }
     cout << "Vocabulary loaded!" << endl << endl;
 
+    // test
+    // cv::Mat frame = cv::imread("/home/xshen/catkin_ws/src/image_processing/lab.png");
+    // std::cout << "cur_gpu_id: " << detector.cur_gpu_id<< std::endl;
+    // std::vector<bbox_t> result_vec = detector.detect(frame);
+    // cout << result_vec[0].x << " " << result_vec[0].y << " " << result_vec[0].w << " " << result_vec[0].h << endl;
+    // cout << "track_id: " << result_vec[0].track_id << endl;
+    // cout << "obj_id: " << result_vec[0].obj_id << endl;
+
+
+    // mptDynamicObjectDetecting = new thread(&ORB_SLAM2::DynamicObjectDetecting::run, mpDynamicObjectDetector);   // 多线程没有帮助
+    // mptDynamicObjectDetecting->detach();
+    mpDynamicObjectDetector = new DynamicObjectDetecting();
+
     //Create KeyFrame Database
     mpKeyFrameDatabase = new KeyFrameDatabase(*mpVocabulary);
 
@@ -84,26 +101,31 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     //Initialize the Tracking thread
     //(it will live in the main thread of execution, the one that called this constructor)
     mpTracker = new Tracking(this, mpVocabulary, mpFrameDrawer, mpMapDrawer,
-                             mpMap, mpKeyFrameDatabase, strSettingsFile, mSensor);
+                             mpMap, mpKeyFrameDatabase, strSettingsFile, mSensor, *mpDynamicObjectDetector);
+
+    
 
     //Initialize the Local Mapping thread and launch
     mpLocalMapper = new LocalMapping(mpMap, mSensor==MONOCULAR);
     mptLocalMapping = new thread(&ORB_SLAM2::LocalMapping::Run,mpLocalMapper);
+    mptLocalMapping->detach();
 
     //Initialize the Loop Closing thread and launch
     mpLoopCloser = new LoopClosing(mpMap, mpKeyFrameDatabase, mpVocabulary, mSensor!=MONOCULAR);
     mptLoopClosing = new thread(&ORB_SLAM2::LoopClosing::Run, mpLoopCloser);
+    mptLoopClosing->detach();
 
     //Initialize the Viewer thread and launch
     if(bUseViewer)
     {
         mpViewer = new Viewer(this, mpFrameDrawer,mpMapDrawer,mpTracker,strSettingsFile);
         mptViewer = new thread(&Viewer::Run, mpViewer);
+        mptViewer->detach();
         mpTracker->SetViewer(mpViewer);
     }
 
-    //Set pointers between threads
-    mpTracker->SetLocalMapper(mpLocalMapper);
+    //Set pointers between threads  
+    mpTracker->SetLocalMapper(mpLocalMapper); //在tracking线程中设置局部建图的指针
     mpTracker->SetLoopClosing(mpLoopCloser);
 
     mpLocalMapper->SetTracker(mpTracker);
@@ -164,31 +186,38 @@ cv::Mat System::TrackStereo(const cv::Mat &imLeft, const cv::Mat &imRight, const
     return Tcw;
 }
 
-cv::Mat System::TrackRGBD(const cv::Mat &im, const cv::Mat &depthmap, const double &timestamp)
+cv::Mat System::TrackRGBD(const cv::Mat &im, const cv::Mat &depthmap, const double &timestamp, const double &timestampD)
 {
+    //判断传入传感器类型是否正确
     if(mSensor!=RGBD)
     {
         cerr << "ERROR: you called TrackRGBD but input sensor was not set to RGBD." << endl;
         exit(-1);
     }    
 
-    // Check mode change
+    // 动态目标检测线程插入图像
+    // mpDynamicObjectDetector->insertImage(im);
+
+    // Check mode change，检查slam模式的改变 
+    // system类初始化的时候mbActivateLocalizationMode和mbDeactivateLocalizationMode均设置为false，因此默认是SLAM模式
+    // 多线程中要加锁的程序用{}括起来构成作用域!!
     {
+        //在该声明周期内对 mMutexMode 进行上锁操作，不允许其他线程修改定位模式
         unique_lock<mutex> lock(mMutexMode);
-        if(mbActivateLocalizationMode)
+        if(mbActivateLocalizationMode) //激活定位模式，关闭局部建图，系统只进行定位
         {
             mpLocalMapper->RequestStop();
 
             // Wait until Local Mapping has effectively stopped
             while(!mpLocalMapper->isStopped())
             {
-                usleep(1000);
+                usleep(1000); //等待1ms
             }
 
             mpTracker->InformOnlyTracking(true);
             mbActivateLocalizationMode = false;
         }
-        if(mbDeactivateLocalizationMode)
+        if(mbDeactivateLocalizationMode) //若定位模式被关闭，则之前建立的局部地图被释放（清除）
         {
             mpTracker->InformOnlyTracking(false);
             mpLocalMapper->Release();
@@ -196,7 +225,7 @@ cv::Mat System::TrackRGBD(const cv::Mat &im, const cv::Mat &depthmap, const doub
         }
     }
 
-    // Check reset
+    // Check reset，检验系统是否被重启
     {
     unique_lock<mutex> lock(mMutexReset);
     if(mbReset)
@@ -206,13 +235,13 @@ cv::Mat System::TrackRGBD(const cv::Mat &im, const cv::Mat &depthmap, const doub
     }
     }
 
-    cv::Mat Tcw = mpTracker->GrabImageRGBD(im,depthmap,timestamp);
+    cv::Mat Tcw = mpTracker->GrabImageRGBD(im,depthmap,timestamp,timestampD,*mpDynamicObjectDetector); //执行tracking类函数->tracking.cc
 
     unique_lock<mutex> lock2(mMutexState);
-    mTrackingState = mpTracker->mState;
-    mTrackedMapPoints = mpTracker->mCurrentFrame.mvpMapPoints;
-    mTrackedKeyPointsUn = mpTracker->mCurrentFrame.mvKeysUn;
-    return Tcw;
+    mTrackingState = mpTracker->mState; //更新追踪状态
+    mTrackedMapPoints = mpTracker->mCurrentFrame.mvpMapPoints; //更新地图点向量
+    mTrackedKeyPointsUn = mpTracker->mCurrentFrame.mvKeysUn; //更新关键点向量
+    return Tcw; //返回相机坐标系到世界坐标系的变换矩阵
 }
 
 cv::Mat System::TrackMonocular(const cv::Mat &im, const double &timestamp)
@@ -300,6 +329,9 @@ void System::Reset()
 
 void System::Shutdown()
 {
+    // mpDynamicObjectDetector->saveDistance();
+
+    // mpDynamicObjectDetector->requestFinish(); // 退出还在等待的动态目标检测线程
     mpLocalMapper->RequestFinish();
     mpLoopCloser->RequestFinish();
     if(mpViewer)
@@ -310,11 +342,13 @@ void System::Shutdown()
     }
 
     // Wait until all thread have effectively stopped
+    // 实际上，条件!mpDynamicObjectDetector->isFinished()可以不加？运行shutdown()，动态目标检测线程应该处于运行结束状态
     while(!mpLocalMapper->isFinished() || !mpLoopCloser->isFinished() || mpLoopCloser->isRunningGBA())
     {
         usleep(5000);
     }
 
+    
     if(mpViewer)
         pangolin::BindToContext("ORB-SLAM2: Map Viewer");
 }

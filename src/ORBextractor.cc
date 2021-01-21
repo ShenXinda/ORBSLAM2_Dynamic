@@ -412,6 +412,9 @@ ORBextractor::ORBextractor(int _nfeatures, float _scaleFactor, int _nlevels,
     nfeatures(_nfeatures), scaleFactor(_scaleFactor), nlevels(_nlevels),
     iniThFAST(_iniThFAST), minThFAST(_minThFAST)
 {
+    // 将每一层的缩放尺度用向量mvScaleFactor和mvLevelSigma2存储，
+    // 并求倒数mvInvScaleFactor和mvInvLevelSigma2
+    // 作用？？
     mvScaleFactor.resize(nlevels);
     mvLevelSigma2.resize(nlevels);
     mvScaleFactor[0]=1.0f;
@@ -432,8 +435,9 @@ ORBextractor::ORBextractor(int _nfeatures, float _scaleFactor, int _nlevels,
 
     mvImagePyramid.resize(nlevels);
 
+    // 分配每一层提取特征点数量，参见https://zhuanlan.zhihu.com/p/61738607
     mnFeaturesPerLevel.resize(nlevels);
-    float factor = 1.0f / scaleFactor;
+    float factor = 1.0f / scaleFactor;   // 0 < factor < 1
     float nDesiredFeaturesPerScale = nfeatures*(1 - factor)/(1 - (float)pow((double)factor, (double)nlevels));
 
     int sumFeatures = 0;
@@ -449,17 +453,20 @@ ORBextractor::ORBextractor(int _nfeatures, float _scaleFactor, int _nlevels,
     const Point* pattern0 = (const Point*)bit_pattern_31_;
     std::copy(pattern0, pattern0 + npoints, std::back_inserter(pattern));
 
-    //This is for orientation
+    // This is for orientation
     // pre-compute the end of a row in a circular patch
+    // 求灰度质心的区域是个圆形， 即边长为2*HALF_PATCH_SIZE的正方形的内圆
     umax.resize(HALF_PATCH_SIZE + 1);
-
-    int v, v0, vmax = cvFloor(HALF_PATCH_SIZE * sqrt(2.f) / 2 + 1);
+    // 取HALF_PATCH_SIZ*sqrt(2)/2处可以将四分之一圆对半分
+    int v, v0, vmax = cvFloor(HALF_PATCH_SIZE * sqrt(2.f) / 2 + 1); 
     int vmin = cvCeil(HALF_PATCH_SIZE * sqrt(2.f) / 2);
     const double hp2 = HALF_PATCH_SIZE*HALF_PATCH_SIZE;
     for (v = 0; v <= vmax; ++v)
         umax[v] = cvRound(sqrt(hp2 - v * v));
 
-    // Make sure we are symmetric
+    // Make sure we are symmetric，目的使u,v坐标对应的圆对称
+    // umax[x] = 16 16 16 16 15 15 15 14 14 13 12 12  11     9   8     6        3
+    // vmax[16-x] =       3        6      8  9    11  12 12  13  14 14 15 15 15 16 16 16 16
     for (v = HALF_PATCH_SIZE, v0 = 0; v >= vmin; --v)
     {
         while (umax[v0] == umax[v0 + 1])
@@ -852,6 +859,131 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
         computeOrientation(mvImagePyramid[level], allKeypoints[level], umax);
 }
 
+void ORBextractor::ComputeStaticKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoints, const std::vector<bbox_t>& dynaObjs, const double bboxSingleSideZoomSize)
+{
+    allKeypoints.resize(nlevels);
+
+    const float W = 30;
+
+    for (int level = 0; level < nlevels; ++level)
+    {
+        const float scale = mvInvScaleFactor[level];
+
+        const int minBorderX = EDGE_THRESHOLD-3;
+        const int minBorderY = minBorderX;
+        const int maxBorderX = mvImagePyramid[level].cols-EDGE_THRESHOLD+3;
+        const int maxBorderY = mvImagePyramid[level].rows-EDGE_THRESHOLD+3;
+
+        vector<cv::KeyPoint> vToDistributeKeys;
+        vToDistributeKeys.reserve(nfeatures*10);
+
+        const float width = (maxBorderX-minBorderX);
+        const float height = (maxBorderY-minBorderY);
+
+        const int nCols = width/W;
+        const int nRows = height/W;
+        const int wCell = ceil(width/nCols);
+        const int hCell = ceil(height/nRows);
+
+        
+        // *************************************************************
+        vector<vector<bool>> g(maxBorderY+1,vector<bool>(maxBorderX+1,true));
+        // 去除动态特征点
+        for (bbox_t bbox: dynaObjs) {
+            // bbox扩大0.1倍
+            int x1 = round((float)(bbox.x-bboxSingleSideZoomSize*bbox.w)*scale);
+            int y1 = round((float)(bbox.y-bboxSingleSideZoomSize*bbox.h)*scale);
+            int x2 = round((float)(bbox.x+(1+bboxSingleSideZoomSize)*bbox.w)*scale);
+            int y2 = round((float)(bbox.y+(1+bboxSingleSideZoomSize)*bbox.h)*scale);
+            y1 = y1 < minBorderY ? minBorderY : y1;
+            y2 = y2 >= maxBorderY ? maxBorderY : y2;
+            x1 = x1 < minBorderX ? minBorderX : x1;
+            x2 = x2 >= maxBorderX ? maxBorderX : x2;
+            for (size_t i = y1; i <= y2; i++) {
+                for (size_t j = x1; j <= x2; j++) {
+                    g[i][j] = false;
+                }
+            }
+        }
+        // *************************************************************
+
+        for(int i=0; i<nRows; i++)
+        {
+            const float iniY =minBorderY+i*hCell;
+            float maxY = iniY+hCell+6;
+
+            if(iniY>=maxBorderY-3)
+                continue;
+            if(maxY>maxBorderY)
+                maxY = maxBorderY;
+
+            for(int j=0; j<nCols; j++)
+            {
+                const float iniX =minBorderX+j*wCell;
+                float maxX = iniX+wCell+6;
+                if(iniX>=maxBorderX-6)
+                    continue;
+                if(maxX>maxBorderX)
+                    maxX = maxBorderX;
+
+                vector<cv::KeyPoint> vKeysCell;
+                FAST(mvImagePyramid[level].rowRange(iniY,maxY).colRange(iniX,maxX),
+                     vKeysCell,iniThFAST,true);
+
+                if(vKeysCell.empty())
+                {
+                    FAST(mvImagePyramid[level].rowRange(iniY,maxY).colRange(iniX,maxX),
+                         vKeysCell,minThFAST,true);
+                }
+
+                // *************************************************************
+                vector<cv::KeyPoint> vKeysCellStatic;
+                for (cv::KeyPoint kp: vKeysCell) {
+                    if (g[kp.pt.y+i*hCell+minBorderY][kp.pt.x+j*wCell+minBorderX]) { // 选择非目标框范围内的特征点
+                        vKeysCellStatic.push_back(kp);
+                    }else {
+                        // std::cout << "gg" << std::endl;
+                    }
+                }
+
+                if(!vKeysCellStatic.empty())
+                {
+                    for(vector<cv::KeyPoint>::iterator vit=vKeysCellStatic.begin(); vit!=vKeysCellStatic.end();vit++)
+                    {
+                        (*vit).pt.x+=j*wCell;
+                        (*vit).pt.y+=i*hCell;
+                        vToDistributeKeys.push_back(*vit);
+                    }
+                }
+                // *************************************************************
+
+            }
+        }
+
+        vector<KeyPoint> & keypoints = allKeypoints[level];
+        keypoints.reserve(nfeatures);
+
+        keypoints = DistributeOctTree(vToDistributeKeys, minBorderX, maxBorderX,
+                                      minBorderY, maxBorderY,mnFeaturesPerLevel[level], level);
+
+        const int scaledPatchSize = PATCH_SIZE*mvScaleFactor[level];
+
+        // Add border to coordinates and scale information
+        const int nkps = keypoints.size();
+        for(int i=0; i<nkps ; i++)
+        {
+            keypoints[i].pt.x+=minBorderX;
+            keypoints[i].pt.y+=minBorderY;
+            keypoints[i].octave=level;
+            keypoints[i].size = scaledPatchSize;
+        }
+    }
+
+    // compute orientations
+    for (int level = 0; level < nlevels; ++level)
+        computeOrientation(mvImagePyramid[level], allKeypoints[level], umax);
+}
+
 void ORBextractor::ComputeKeyPointsOld(std::vector<std::vector<KeyPoint> > &allKeypoints)
 {
     allKeypoints.resize(nlevels);
@@ -1054,6 +1186,70 @@ void ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPo
 
     vector < vector<KeyPoint> > allKeypoints;
     ComputeKeyPointsOctTree(allKeypoints);
+    //ComputeKeyPointsOld(allKeypoints);
+
+    Mat descriptors;
+
+    int nkeypoints = 0;
+    for (int level = 0; level < nlevels; ++level)
+        nkeypoints += (int)allKeypoints[level].size();
+    if( nkeypoints == 0 )
+        _descriptors.release();
+    else
+    {
+        _descriptors.create(nkeypoints, 32, CV_8U);
+        descriptors = _descriptors.getMat();
+    }
+
+    _keypoints.clear();
+    _keypoints.reserve(nkeypoints);
+
+    int offset = 0;
+    for (int level = 0; level < nlevels; ++level)
+    {
+        vector<KeyPoint>& keypoints = allKeypoints[level];
+        int nkeypointsLevel = (int)keypoints.size();
+
+        if(nkeypointsLevel==0)
+            continue;
+
+        // preprocess the resized image
+        Mat workingMat = mvImagePyramid[level].clone();
+        GaussianBlur(workingMat, workingMat, Size(7, 7), 2, 2, BORDER_REFLECT_101);
+
+        // Compute the descriptors
+        Mat desc = descriptors.rowRange(offset, offset + nkeypointsLevel);
+        computeDescriptors(workingMat, keypoints, desc, pattern);
+
+        offset += nkeypointsLevel;
+
+        // Scale keypoint coordinates
+        if (level != 0)
+        {
+            float scale = mvScaleFactor[level]; //getScale(level, firstLevel, scaleFactor);
+            for (vector<KeyPoint>::iterator keypoint = keypoints.begin(),
+                 keypointEnd = keypoints.end(); keypoint != keypointEnd; ++keypoint)
+                keypoint->pt *= scale;
+        }
+        // And add the keypoints to the output
+        _keypoints.insert(_keypoints.end(), keypoints.begin(), keypoints.end());
+    }
+}
+
+void ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPoint>& _keypoints,
+                      OutputArray _descriptors, const std::vector<bbox_t>& dynaObjs, const double bboxSingleSideZoomSize)
+{ 
+    if(_image.empty())
+        return;
+
+    Mat image = _image.getMat();
+    assert(image.type() == CV_8UC1 );
+
+    // Pre-compute the scale pyramid
+    ComputePyramid(image);
+
+    vector < vector<KeyPoint> > allKeypoints;
+    ComputeStaticKeyPointsOctTree(allKeypoints, dynaObjs, bboxSingleSideZoomSize);
     //ComputeKeyPointsOld(allKeypoints);
 
     Mat descriptors;

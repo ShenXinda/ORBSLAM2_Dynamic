@@ -92,10 +92,21 @@ public:
     float mTrackProjX;
     float mTrackProjY;
     float mTrackProjXR;
+
+    // TrackLocalMap -> SearchByProjection中决定是否对该点进行投影的变量
+    // mbTrackInView==false的点有几种：
+    // 1. 已经和当前帧经过匹配（Tracking::TrackReferenceKeyFrame，Tracking::TrackWithMotionModel）但在优化过程中认为是外点
+    // 2. 已经和当前帧经过匹配且为内点（Tracking::TrackLocalMap -> SearchLocalPoints()），这类点也不需要再进行投影
+    // 3. 不在当前相机视野中的点（即未通过isInFrustum判断，Tracking::SearchLocalPoints()）
     bool mbTrackInView;
     int mnTrackScaleLevel;
     float mTrackViewCos;
+    // TrackLocalMap -> UpdateLocalPoints中防止将MapPoints重复添加至mvpLocalMapPoints的标记
     long unsigned int mnTrackReferenceForFrame;
+    // TrackLocalMap -> SearchLocalPoints中决定是否进行isInFrustum判断的变量
+    // mnLastFrameSeen==mCurrentFrame.mnId的点有几种：
+    // 1. 已经和当前帧经过匹配（TrackReferenceKeyFrame，TrackWithMotionModel）但在优化过程中认为是外点
+    // 2. 已经和当前帧经过匹配且为内点，这类点也不需要再进行投影
     long unsigned int mnLastFrameSeen;
 
     // Variables used by local mapping
@@ -134,6 +145,7 @@ protected:
      int mnFound;
 
      // Bad flag (we do not currently erase MapPoint from memory)
+     // // 局部建图线程中被剔除的地图点，标记为mbBad=true
      bool mbBad;
      MapPoint* mpReplaced;
 

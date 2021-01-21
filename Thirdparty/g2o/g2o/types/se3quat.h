@@ -70,7 +70,7 @@ namespace g2o {
         explicit SE3Quat(const MatrixBase<Derived>& v)
         {
           assert((v.size() == 6 || v.size() == 7) && "Vector dimension does not match");
-          if (v.size() == 6) {
+          if (v.size() == 6) { //6维，输入的必须是单位四元数的虚部，可以通过模为1，计算实部
             for (int i=0; i<3; i++){
               _t[i]=v[i];
               _r.coeffs()(i)=v[i+3];
@@ -79,8 +79,8 @@ namespace g2o {
             if (_r.norm()>1.){
               _r.normalize();
             } else {
-              double w2=1.-_r.squaredNorm();
-              _r.w()= (w2<0.) ? 0. : sqrt(w2);
+              double w2=1.-_r.squaredNorm(); //w^2 = 1 - (x^2+y^2+z^2)
+              _r.w()= (w2<0.) ? 0. : sqrt(w2); //else中已经保证_r.norm() <=1 了，w2<0.这种情况不存在？
             }
           }
           else if (v.size() == 7) {
@@ -89,7 +89,7 @@ namespace g2o {
               _t(i) = v(idx);
             for (int i=0; i<4; ++i, ++idx)
               _r.coeffs()(i) = v(idx);
-            normalizeRotation();
+            normalizeRotation(); //将四元数归一化，且实部为正数
           }
         }
 
@@ -135,7 +135,7 @@ namespace g2o {
       }
 
 
-      inline Vector7d toVector() const{
+      inline Vector7d toVector() const{ //四元数+平移向量，7维
         Vector7d v;
         v[0]=_t(0);
         v[1]=_t(1);
@@ -147,12 +147,12 @@ namespace g2o {
         return v;
       }
 
-      inline void fromVector(const Vector7d& v){
+      inline void fromVector(const Vector7d& v){ 
         _r=Quaterniond(v[6], v[3], v[4], v[5]);
         _t=Vector3d(v[0], v[1], v[2]);
       }
 
-      inline Vector6d toMinimalVector() const{
+      inline Vector6d toMinimalVector() const{  //6维，必须是单位四元数的虚部，可以通过模为1，计算实部
         Vector6d v;
         v[0]=_t(0);
         v[1]=_t(1);

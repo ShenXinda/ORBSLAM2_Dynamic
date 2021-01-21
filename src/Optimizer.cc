@@ -248,13 +248,13 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
     optimizer.setAlgorithm(solver);
 
-    int nInitialCorrespondences=0;
+    int nInitialCorrespondences=0; //当前帧关键点对应的地图点数量（无对应地图点的指针指向NULL，需要排除）
 
     // Set Frame vertex
     g2o::VertexSE3Expmap * vSE3 = new g2o::VertexSE3Expmap();
-    vSE3->setEstimate(Converter::toSE3Quat(pFrame->mTcw));
+    vSE3->setEstimate(Converter::toSE3Quat(pFrame->mTcw)); //设置位姿估计的初始值
     vSE3->setId(0);
-    vSE3->setFixed(false);
+    vSE3->setFixed(false); //当前帧位姿需要优化，不固定
     optimizer.addVertex(vSE3);
 
     // Set MapPoint vertices
@@ -267,8 +267,8 @@ int Optimizer::PoseOptimization(Frame *pFrame)
 
     vector<g2o::EdgeStereoSE3ProjectXYZOnlyPose*> vpEdgesStereo;
     vector<size_t> vnIndexEdgeStereo;
-    vpEdgesStereo.reserve(N);
-    vnIndexEdgeStereo.reserve(N);
+    vpEdgesStereo.reserve(N);      //保存优化的边
+    vnIndexEdgeStereo.reserve(N); //记录有对应地图点的关键点（边）的索引
 
     const float deltaMono = sqrt(5.991);
     const float deltaStereo = sqrt(7.815);
@@ -323,7 +323,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
                 pFrame->mvbOutlier[i] = false;
 
                 //SET EDGE
-                Eigen::Matrix<double,3,1> obs;
+                Eigen::Matrix<double,3,1> obs; // 观测值，3维向量，（u_L,v_L,u_R）
                 const cv::KeyPoint &kpUn = pFrame->mvKeysUn[i];
                 const float &kp_ur = pFrame->mvuRight[i];
                 obs << kpUn.pt.x, kpUn.pt.y, kp_ur;
@@ -332,13 +332,13 @@ int Optimizer::PoseOptimization(Frame *pFrame)
 
                 e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(0)));
                 e->setMeasurement(obs);
-                const float invSigma2 = pFrame->mvInvLevelSigma2[kpUn.octave];
+                const float invSigma2 = pFrame->mvInvLevelSigma2[kpUn.octave];  // ??
                 Eigen::Matrix3d Info = Eigen::Matrix3d::Identity()*invSigma2;
-                e->setInformation(Info);
+                e->setInformation(Info); // 设置信息矩阵
 
                 g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
-                e->setRobustKernel(rk);
-                rk->setDelta(deltaStereo);
+                e->setRobustKernel(rk);  // 设置Huber核函数，见书上P252
+                rk->setDelta(deltaStereo);  // 设置阈值delta
 
                 e->fx = pFrame->fx;
                 e->fy = pFrame->fy;
@@ -365,7 +365,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
         return 0;
 
     // We perform 4 optimizations, after each optimization we classify observation as inlier/outlier
-    // At the next optimization, outliers are not included, but at the end they can be classified as inliers again.
+    // At the next optimization, outliers are not included, but at the end they can be classified as inliers again.??
     const float chi2Mono[4]={5.991,5.991,5.991,5.991};
     const float chi2Stereo[4]={7.815,7.815,7.815, 7.815};
     const int its[4]={10,10,10,10};    
@@ -375,7 +375,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     {
 
         vSE3->setEstimate(Converter::toSE3Quat(pFrame->mTcw));
-        optimizer.initializeOptimization(0);
+        optimizer.initializeOptimization(0); // 优化level为0的边，level大于等于1的边不优化
         optimizer.optimize(its[it]);
 
         nBad=0;
@@ -421,20 +421,20 @@ int Optimizer::PoseOptimization(Frame *pFrame)
 
             const float chi2 = e->chi2();
 
-            if(chi2>chi2Stereo[it])
+            if(chi2>chi2Stereo[it]) // 外点
             {
                 pFrame->mvbOutlier[idx]=true;
-                e->setLevel(1);
+                e->setLevel(1); // level设置为1，不优化 
                 nBad++;
             }
-            else
+            else   // 内点
             {                
                 e->setLevel(0);
                 pFrame->mvbOutlier[idx]=false;
             }
 
             if(it==2)
-                e->setRobustKernel(0);
+                e->setRobustKernel(0); //最后一次迭代不使用鲁棒核函数
         }
 
         if(optimizer.edges().size()<10)

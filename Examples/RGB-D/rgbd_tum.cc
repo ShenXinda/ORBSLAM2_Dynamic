@@ -23,6 +23,7 @@
 #include<algorithm>
 #include<fstream>
 #include<chrono>
+#include <unistd.h>
 
 #include<opencv2/core/core.hpp>
 
@@ -31,10 +32,15 @@
 using namespace std;
 
 void LoadImages(const string &strAssociationFilename, vector<string> &vstrImageFilenamesRGB,
-                vector<string> &vstrImageFilenamesD, vector<double> &vTimestamps);
+                vector<string> &vstrImageFilenamesD, vector<double> &vTimestamps, vector<double> &vTimestampsDepth);
 
 int main(int argc, char **argv)
 {
+    // ./Examples/RGB-D/rgbd_tum  -> arg[0] -> 运行rgbd_tum.cc文件，ORB_SLAM2的main函数
+    //  Vocabulary/ORBvoc.txt  -> arg[1] ->  词袋文件的路径
+    // Examples/RGB-D/TUM1.yaml  -> arg[2] -> 配置文件的路径
+    // /media/Files/rgbdslam_DataSet/rgbd_dataset_freiburg1_desk -> arg[3] -> 下载的数据集文件夹
+    //  Examples/RGB-D/associations/fr1_desk.txt -> arg[4] -> 关联文件的路径
     if(argc != 5)
     {
         cerr << endl << "Usage: ./rgbd_tum path_to_vocabulary path_to_settings path_to_sequence path_to_association" << endl;
@@ -45,8 +51,11 @@ int main(int argc, char **argv)
     vector<string> vstrImageFilenamesRGB;
     vector<string> vstrImageFilenamesD;
     vector<double> vTimestamps;
+    vector<double> vTimestampsDepth;
     string strAssociationFilename = string(argv[4]);
-    LoadImages(strAssociationFilename, vstrImageFilenamesRGB, vstrImageFilenamesD, vTimestamps);
+    //loadImage用于获取RGB和深度图像的路径，保存于vstrImageFilenamesRGB和vstrImageFilenamesD，
+    //时间戳保存于vTimestamps
+    LoadImages(strAssociationFilename, vstrImageFilenamesRGB, vstrImageFilenamesD, vTimestamps, vTimestampsDepth);
 
     // Check consistency in the number of images and depthmaps
     int nImages = vstrImageFilenamesRGB.size();
@@ -62,9 +71,9 @@ int main(int argc, char **argv)
     }
 
     // Create SLAM system. It initializes all system threads and gets ready to process frames.
-    ORB_SLAM2::System SLAM(argv[1],argv[2],ORB_SLAM2::System::RGBD,true);
+    ORB_SLAM2::System SLAM(argv[1],argv[2],ORB_SLAM2::System::RGBD,true);  // -> System.cc, 创建了System类的对象
 
-    // Vector for tracking time statistics
+    // Vector for tracking time statistics，每一帧处理时间？
     vector<float> vTimesTrack;
     vTimesTrack.resize(nImages);
 
@@ -76,10 +85,11 @@ int main(int argc, char **argv)
     cv::Mat imRGB, imD;
     for(int ni=0; ni<nImages; ni++)
     {
-        // Read image and depthmap from file
+        // Read image and depthmap from file，CV_LOAD_IMAGE_UNCHANGED->加载原图
         imRGB = cv::imread(string(argv[3])+"/"+vstrImageFilenamesRGB[ni],CV_LOAD_IMAGE_UNCHANGED);
         imD = cv::imread(string(argv[3])+"/"+vstrImageFilenamesD[ni],CV_LOAD_IMAGE_UNCHANGED);
         double tframe = vTimestamps[ni];
+        double tframeD = vTimestampsDepth[ni];
 
         if(imRGB.empty())
         {
@@ -87,35 +97,41 @@ int main(int argc, char **argv)
                  << string(argv[3]) << "/" << vstrImageFilenamesRGB[ni] << endl;
             return 1;
         }
+ 
+        #ifdef COMPILEDWITHC11 //时间点，steady_clock最短时间间隔0.1us
+                std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();  
+        #else
+                std::chrono::monotonic_clock::time_point t1 = std::chrono::monotonic_clock::now();
+        #endif
 
-#ifdef COMPILEDWITHC11
-        std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
-#else
-        std::chrono::monotonic_clock::time_point t1 = std::chrono::monotonic_clock::now();
-#endif
+                // Pass the image to the SLAM system,传入图像进行追踪
+                SLAM.TrackRGBD(imRGB,imD,tframe,tframeD); 
+                
 
-        // Pass the image to the SLAM system
-        SLAM.TrackRGBD(imRGB,imD,tframe);
 
-#ifdef COMPILEDWITHC11
-        std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
-#else
-        std::chrono::monotonic_clock::time_point t2 = std::chrono::monotonic_clock::now();
-#endif
+                
 
-        double ttrack= std::chrono::duration_cast<std::chrono::duration<double> >(t2 - t1).count();
+        #ifdef COMPILEDWITHC11
+                std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
+        #else
+                std::chrono::monotonic_clock::time_point t2 = std::chrono::monotonic_clock::now();
+        #endif
+        //duration还有一个成员函数count()返回Rep类型的Period数量（如0.01s，0.01->Rep，s->period)
+        //Rep表示一种数值类型，用来表示Period的数量，比如int float double 
+        // Period是ratio类型，用来表示时间单位，比如second milisecond
+        double ttrack= std::chrono::duration_cast<std::chrono::duration<double> >(t2 - t1).count(); //持续时间
 
         vTimesTrack[ni]=ttrack;
 
         // Wait to load the next frame
         double T=0;
         if(ni<nImages-1)
-            T = vTimestamps[ni+1]-tframe;
+            T = vTimestamps[ni+1]-tframe; //当前帧和下一帧的时间间隔
         else if(ni>0)
-            T = tframe-vTimestamps[ni-1];
+            T = tframe-vTimestamps[ni-1];  //0～ni-1，ni-1是最后一帧 ，防止越界
 
         if(ttrack<T)
-            usleep((T-ttrack)*1e6);
+            usleep((T-ttrack)*1e6);  //主线程等待
     }
 
     // Stop all threads
@@ -140,11 +156,13 @@ int main(int argc, char **argv)
 }
 
 void LoadImages(const string &strAssociationFilename, vector<string> &vstrImageFilenamesRGB,
-                vector<string> &vstrImageFilenamesD, vector<double> &vTimestamps)
+                vector<string> &vstrImageFilenamesD, vector<double> &vTimestamps, vector<double> &vTimestampsDepth)
 {
-    ifstream fAssociation;
+    ifstream fAssociation; //文件读操作
+    //在fstream类中，成员函数open()实现打开文件的操作，从而将数据流和文件进行关联
     fAssociation.open(strAssociationFilename.c_str());
-    while(!fAssociation.eof())
+    //C++ eof()函数可以帮助我们用来判断文件是否为空，或是判断其是否读到文件结尾。
+    while(!fAssociation.eof()) 
     {
         string s;
         getline(fAssociation,s);
@@ -159,6 +177,7 @@ void LoadImages(const string &strAssociationFilename, vector<string> &vstrImageF
             ss >> sRGB;
             vstrImageFilenamesRGB.push_back(sRGB);
             ss >> t;
+            vTimestampsDepth.push_back(t);
             ss >> sD;
             vstrImageFilenamesD.push_back(sD);
 

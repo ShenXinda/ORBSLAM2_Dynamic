@@ -222,7 +222,7 @@ protected:
     // Bad flags
     bool mbNotErase;
     bool mbToBeErased;
-    bool mbBad;    
+    bool mbBad;  // 局部建图线程中被剔除的关键帧标记为mbBad=True  
 
     float mHalfBaseline; // Only for visualization
 

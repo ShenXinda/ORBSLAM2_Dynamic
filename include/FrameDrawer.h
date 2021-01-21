@@ -27,6 +27,7 @@
 
 #include<opencv2/core/core.hpp>
 #include<opencv2/features2d/features2d.hpp>
+#include "yolo_v2_class.hpp" 
 
 #include<mutex>
 
@@ -47,6 +48,9 @@ public:
 
     // Draw last processed frame.
     cv::Mat DrawFrame();
+
+    void draw_boxes(cv::Mat mat_img, std::vector<bbox_t> result_vec, std::vector<std::string> obj_names,
+                    int current_det_fps = -1, int current_cap_fps = -1);
 
 protected:
 
