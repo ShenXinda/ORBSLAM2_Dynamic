@@ -3,6 +3,12 @@ include($ENV{ROS_ROOT}/core/rosbuild/rosbuild.cmake)
 
 rosbuild_init()
 
+
+#darknet
+ADD_DEFINITIONS(-DOPENCV)
+ADD_DEFINITIONS(-DGPU)
+
+
 IF(NOT ROS_BUILD_TYPE)
   SET(ROS_BUILD_TYPE Release)
 ENDIF()
@@ -46,8 +52,10 @@ ${PROJECT_SOURCE_DIR}
 ${PROJECT_SOURCE_DIR}/../../../
 ${PROJECT_SOURCE_DIR}/../../../include
 ${Pangolin_INCLUDE_DIRS}
+${PROJECT_SOURCE_DIR}/../../../darknet/include  # darknet
 )
 
+find_library(darknet libdarknet.so ${PROJECT_SOURCE_DIR}/../../../darknet/) # darknet
 set(LIBS 
 ${OpenCV_LIBS} 
 ${EIGEN3_LIBS}
@@ -55,6 +63,7 @@ ${Pangolin_LIBRARIES}
 ${PROJECT_SOURCE_DIR}/../../../Thirdparty/DBoW2/lib/libDBoW2.so
 ${PROJECT_SOURCE_DIR}/../../../Thirdparty/g2o/lib/libg2o.so
 ${PROJECT_SOURCE_DIR}/../../../lib/libORB_SLAM2.so
+${darknet} # darknet
 /usr/lib/x86_64-linux-gnu/libboost_filesystem.so
 /usr/lib/x86_64-linux-gnu/libboost_system.so
 )
